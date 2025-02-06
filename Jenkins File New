@@ -1,0 +1,74 @@
+pipeline {
+    agent any
+    tools {
+        jdk 'jdk17'
+        nodejs 'node16'
+    }
+    environment {
+        SCANNER_HOME=tool 'sonar-scanner'
+    }
+    stages {
+        stage ("Clean Workspace") {
+            steps {
+                cleanWs()
+            }
+        }
+        
+        stage ("Git Checkout") {
+            steps {
+                git branch: 'main', url: 'https://github.com/Sivagcppractice/netflix-clone-on-kubernetes.git'
+            }
+        }
+        
+        stage ("Sonarqube Analysis") {
+            steps {
+                withSonarQubeEnv('sonar') {  
+                    sh ''' $SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=netflix \
+                            -Dsonar.projectKey=netflix '''
+                }
+            }
+        }
+        
+        stage ("Quality Gate") {
+            steps {
+                script {
+                    waitForQualityGate abortPipeline: false  // Removed credentialsId
+                }
+            }
+        }
+        
+        stage('Install Dependencies') {
+            steps {
+                sh "npm install"
+            }
+        }
+
+        stage('TRIVY FS SCAN') {
+            steps {
+                sh "trivy fs . > trivyfs.txt"
+            }
+        }
+        stage("Docker Build & Push"){
+            steps{
+                script{
+                   withDockerRegistry(credentialsId: 'docker-token', toolName: 'docker'){
+                       sh "docker build --build-arg TMDB_V3_API_KEY=ff0b559baaea5add32ada10b92749108 -t netflix ."
+                       sh "docker tag netflix gcpdemo2024/netflix:latest "
+                       sh "docker push gcpdemo2024/netflix:latest "
+                    }
+                }
+            }
+        }
+        stage("TRIVY"){
+            steps{
+                sh "trivy image erickay/netflix:latest > trivyimage.txt"
+            }
+        }
+        
+        stage('Deploy to container'){
+            steps{
+                sh 'docker run -d --name netflix -p 8081:80 gcpdemo2024/netflix:latest'
+            }
+        }
+    }
+}
